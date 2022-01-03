@@ -1,0 +1,566 @@
+---
+title: "Text Mining Analysis"
+author: "_Camelia Guild_"
+date: "12/27/2021"
+output:
+  html_document:
+    theme: cerulean
+    highlight: pygments
+    toc: yes
+    toc_float: yes
+    toc_depth: 4
+---
+
+### Introduction
+
+Text mining is a qualitative analysis method that allows us to extract
+keywords or insights from text data. Text data is unstructured and must be cleaned and manipulated before any analysis can be done. Once the text is cleaned, that is, void  of uninformative text such as, punctuation and certain terms like "of", "the", "is", known as stop words, we can then summarize and visualize the  characteristics of the remaining text. These characteristic _words_ of the text data can then be communicated using frequency tables, plots or word clouds. We might also be interested in which words appear together or are correlated. In addition, we can analyze the text to determine if the subject matter is positive, negative, neutral, or some other emotion.
+
+
+```{r, message=FALSE, warning=FALSE}
+# Load libraries
+library(tm) # text mining package
+library(wordcloud) # word cloud generator
+library(SnowballC) # text stemming
+library(ggplot2) # graphs
+library(tidyverse) # data manipulation
+library(tidytext) # word lexicon dictionaries for sentiments
+library(reshape2) # data transformation
+library(knitr) # used to make kable tables
+```
+
+## About the Data
+
+The text data used for this analysis is the "I Have a Dream" speech by Martin Luther King Jr. - delivered on August 28, 1963. The text from the speech was copied and pasted into a text editor and converted to a plain text format before importing into R. 
+The data source: https://www.americanrhetoric.com/speeches/mlkihaveadream.htm. 
+Note: results from any data analysis will vary depending on the source of the data and the methods used to analyze it.
+
+```{r, message=FALSE, warning=FALSE}
+# read data file
+text_df <- readLines("~/Rpubs/Speech/MLKdream.txt")
+```
+
+
+## Create a Corpus
+A corpus is simply a collection of documents.The documents can be text from speeches, books, news articles, product reviews, etc. A
+corpus is created from the speech text below.
+
+```{r, message=FALSE, warning=FALSE}
+# Create a word corpus
+uncleaned_corpus<- Corpus(VectorSource(text_df))
+uncleaned_corpus
+# Get all the documents in the corpus
+# inspect(uncleaned_corpus)
+```
+
+
+As this output shows, a corpus was created with 42 documents,
+where each document is a paragraph from the speech. If you want to see all the documents contained in a corpus, then run the _inspect()_ function which takes as an argument the name of the corpus.
+
+Let's take a look at the fourth document of the uncleaned corpus. This document contains 7 lines. As expected, there are commas, periods, quotation marks, and capital letters contained in the text. These are some of the uninformative text that will need to be removed before any analysis can be performed.
+
+```{r, message=FALSE, warning=FALSE}
+writeLines(head(strwrap(uncleaned_corpus[[4]]), 7))
+```
+
+## Data Cleaning
+
+In this step, the text is converted to lowercase; numbers, stop words, and punctuation, are removed, and  unnecessary white spaces are striped. The order of data cleaning is important. For example, if punctuation is removed before the SMART stop words, then words like "you'll" or "we've" would not be removed.
+```{r, message=FALSE, warning=FALSE}
+
+# Clean text file and pre-process for word cloud
+# Convert to lowercase
+clean_corpus <- tm_map(uncleaned_corpus, content_transformer(tolower))
+# Remove numbers
+clean_corpus <- tm_map(clean_corpus, removeNumbers)
+# Remove conjunctions etc.: "and",the", "of"
+clean_corpus <- tm_map(clean_corpus, removeWords, stopwords("english"))
+# Remove words like "you'll", "will", "anyways", etc.
+clean_corpus <- tm_map(clean_corpus, removeWords, stopwords("SMART"))
+# Remove commas, periods, etc.
+clean_corpus <- tm_map(clean_corpus, removePunctuation)
+# Strip unnecessary whitespace
+clean_corpus <- tm_map(clean_corpus, stripWhitespace)
+# Customize your own list of words for removal
+clean_corpus <- tm_map(clean_corpus, removeWords, c("tis"))
+
+#inspect(clean_corpus)
+
+```
+
+Now that the data has been cleaned, let's take a look at the same document. We see that the document no longer contains the unnecessary text. 
+
+```{r}
+writeLines(head(strwrap(clean_corpus[[4]])))
+```
+
+## Word Frequency Table
+
+The word corpus is now converted to a term document matrix in which the rows correspond to the terms and column names are the documents. The frequency table quantifies the terms. It shows each word and the number of times it occurs in the data.
+
+```{r, warning=FALSE, message=FALSE}
+# Create data frame with words and frequency of occurrence
+tdm = TermDocumentMatrix(clean_corpus)
+
+tdm2 = as.matrix(tdm)
+words = sort(rowSums(tdm2), decreasing = TRUE)
+df = data.frame(word = names(words), freq = words)
+dim(df)
+# Word frequency table
+head(df, 10)
+```
+
+## Visualization of Word Frequency
+
+We can visualize the frequency of words using different methods.
+
+### Word Cloud
+
+A word cloud is a visual representation of word frequency. It is a useful tool to identify the focus of written material. The word cloud for the "I Have a Dream" speech is shown below. The more commonly the term appears within the text, the larger the word appears in the image. The cloud shows that "freedom" and "negro", are the two most important words.
+
+```{r, echo=FALSE}
+# Create word cloud
+set.seed(1000)
+wordcloud(clean_corpus
+    , scale=c(5,0.5)     # Set min and max scale
+    , max.words=200      # Set top n words
+    , random.order=FALSE # Words in decreasing freq
+    , rot.per=0.20       # % of vertical words
+    , use.r.layout=FALSE # Use C++ collision detection
+    , colors=brewer.pal(8, "Set2"))# other palette options: Accent, Dark2, Set1
+```
+
+
+### Bar Plot
+
+The word frequency plot is simply a visual representation of the frequency table. In a bar plot the length of the bars represent the frequencies of the words.
+
+```{r,echo=FALSE}
+# Plot of most frequently used words
+barplot(df[1:20,]$freq, las=2, names.arg = df[1:20,]$word,
+        col="lightblue", main="Top 20 Most Frequent Words",
+        ylab="Word frequencies")
+```
+
+## Word Correlation
+
+When MLK spoke about "freedom", "dream", and the "negro", what other terms did he use? A word correlation plot will show which terms are correlated.
+
+```{r, echo=FALSE}
+# Plot of terms correlated with the word Freedom
+freedom <-data.frame(findAssocs(tdm, "freedom", 0.35))
+
+my_title <-expression(paste("Words Correlated with ", bold("Freedom")))
+freedom %>% rownames_to_column() %>%
+    ggplot(aes(x=reorder(rowname, freedom), y=freedom)) + 
+    geom_point(shape=20, size=3) +  
+    coord_flip() + ylab("Correlation") + xlab("Word") +
+    ggtitle(my_title) + theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r, echo=FALSE}
+# Plot of terms correlated with the word Dream
+dream <-data.frame(findAssocs(tdm, "dream", 0.35))
+
+my_title <-expression(paste("Words Correlated with ", bold("Dream")))
+dream %>% rownames_to_column() %>%
+    ggplot(aes(x=reorder(rowname, dream), y=dream)) + 
+    geom_point(shape=20, size=3) +
+    coord_flip() + ylab("Correlation") + xlab("Word") +
+    ggtitle(my_title) + theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r, echo=FALSE}
+# Plot of terms correlated with the word Negro
+negro <-data.frame(findAssocs(tdm, "negro", 0.30))
+
+my_title <-expression(paste("Words Correlated with ", bold("Negro")))
+negro %>% rownames_to_column() %>%
+    slice(1:40) %>% # only show 40 correlations
+    ggplot(aes(x=reorder(rowname, negro), y=negro)) + geom_point(shape=20,size=3) +
+    coord_flip() + ylab("Correlation") + xlab("Word") +
+    ggtitle(my_title) + theme(plot.title = element_text(hjust = 0.5))
+```
+
+## Basic Sentiment Analysis
+
+Sentiment analysis allows us to evaluate the opinion or emotion in text.
+The tidytext package contains three sentiment lexicons in the sentiments dataset:
+
+- AFINN from Finn Årup Nielsen https://github.com/fnielsen/afinn
+- Bing from Bing Liu et al https://rpubs.com/tsholliger/301914
+- NRC from Saif Mohammad and Peter Turney https://saifmohammad.com/WebPages/NRC-Emotion-Lexicon.htm
+
+All three lexicons are based on unigrams (or single words). The NRC lexicon categories words into categories of positive, negative, anger, anticipation, disgust, fear, joy, sadness, surprise, and trust. The Bing lexicon categorizes words into positive and negative categories. The AFINN lexicon assigns words with a score that runs between -5 and 5, with negative scores indicating negative sentiment and positive scores indicating positive sentiment.
+
+The distribution of negative and positive words contained in all three lexicons are shown below. All three lexicons have more negative than positive words, but the ratio of negative to positive words is higher in both the AFINN and Bing lexicons. This will contribute to different results depending on which lexicon is used, as well as any systematic difference in word matches. 
+
+
+NRC lexicon:
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+# NRC lexicon positive and negative sentiments
+get_sentiments("nrc") %>% 
+    filter(sentiment %in% c("positive", "negative")) %>%
+    count(sentiment) 
+```
+
+Bing lexicon:
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+# Bing lexicon positive and negative sentiments
+get_sentiments("bing") %>% count(sentiment) 
+```
+
+AFINN lexicon:
+```{r, message=FALSE, echo=FALSE}
+# Descriptive statistics
+afinn_desc <- get_sentiments("afinn")
+summary(afinn_desc)
+
+afinn_sent <- get_sentiments("afinn") %>%
+    mutate(sentiment = case_when(value < 0 ~ 'negative', 
+                         value > 0 ~ 'positive')) 
+    
+afinn <- afinn_sent %>%  group_by(sentiment)  %>% 
+    count(word, sentiment) %>%
+    summarize(total=sum(n)) %>%
+    drop_na() 
+  
+afinn
+```
+
+
+
+### NRC: Positive and Negative Words
+
+Cross-matching the words from the speech with the NRC lexicon returned a total of 55 negative words and 71 positive words. The top 20 words that contribute to these sentiments are shown in the plot below. 
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# NRC Lexicon
+# Get the negative and positive sentiments word list from the NRC lexicon
+nrc_sent <-get_sentiments("nrc") %>%
+    filter(sentiment %in% c("positive", "negative")) %>%
+    count(word, sentiment, sort=T) %>%
+    ungroup()
+# Inner join words with NRC lexicon
+nrc_df <- df %>% inner_join(nrc_sent)
+# Plot of negative and positive sentiments
+nrc_df %>%
+    group_by(sentiment) %>%
+    #slice_max(order_by = freq, n=10) %>%
+    do(head(., n=20)) %>% # top 20 words
+    ungroup() %>%
+    mutate(word = reorder(word, freq)) %>%
+    ggplot(aes(word, freq, fill=sentiment)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~sentiment, scales = "free_y") +
+    labs(y = "Contribution to sentiment (NRC lexicon)", x=NULL) +
+    coord_flip()
+
+```
+
+The calculated result indicates that the **_net sentiment_** of the speech is **_positive_**.
+```{r, message=FALSE, echo=FALSE}
+# NRC: There are 55 negative terms and 71 positive terms
+nrc_df %>% group_by(sentiment) %>%
+    summarize(total=sum(n)) %>%
+    spread(sentiment, total) %>%
+    mutate((net.sentiment=positive-negative)) %>% 
+    kable(align = 'l')
+```
+
+
+The comparison word cloud depicts all the words that contribute to positive and negative sentiments according to the NRC lexicon.
+
+```{r, echo=FALSE}
+set.seed(123)
+nrc_df %>% 
+    acast(word ~ sentiment, value.var = "freq", fill=0) %>%
+    comparison.cloud(colors = brewer.pal(8,"Set1")
+                     ,scale =c(5,.5)
+                     , rot.per=0.10
+                     , title.size=2
+                     , max.words=100)
+```
+
+### Bing: Positive and Negative Words
+
+Cross-matching the words from the speech with the Bing lexicon returned a total of 54 negative words and 46 positive words. The top 20 words that contribute to these sentiments are shown in the plot below. 
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+# Bing Lexicon
+bing_sent <- df %>%
+    inner_join(get_sentiments("bing")) %>%
+    count(word, sentiment, sort=T) %>%
+    ungroup()
+# Inner join words with Bing lexicon
+bing_df <- df %>% inner_join(bing_sent)
+# Plot positive and negative sentiments
+bing_df %>%
+    group_by(sentiment) %>%
+    do(head(., n=20)) %>% # top 20 words
+    ungroup() %>%
+    mutate(word = reorder(word, freq)) %>%
+    ggplot(aes(word, freq, fill=sentiment)) +
+    geom_col(show.legend = F) +
+    facet_wrap(~sentiment, scales = "free_y") +
+    labs(y = "Contribution to sentiment (Bing lexicon)", x=NULL) +
+    coord_flip()
+```
+
+
+The calculated result indicates that the **_net sentiment_** of the speech is **_negative_**.
+```{r, message=FALSE, echo=FALSE}
+# Bing: There are 54 negative terms and 46 positive terms
+ bing_df %>% group_by(sentiment) %>% 
+    summarize(total=sum(n)) %>%
+    spread(sentiment, total) %>%
+    mutate((net.sentiment=positive-negative)) %>% 
+    kable(align = 'l')
+```
+
+
+The comparison word cloud depicts all the words that contribute to positive and negative sentiments according to the Bing lexicon.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+set.seed(123)
+bing_df %>% 
+    acast(word ~ sentiment, value.var = "freq", fill=0) %>%
+    comparison.cloud(colors = brewer.pal(8,"Set1")
+                      ,scale =c(5,.5)
+                     , rot.per=0.10
+                     , title.size=2
+                     , max.words=100)
+```
+
+### AFINN: Positive and Negative Words
+
+Cross-matching the words from the speech with the AFINN lexicon returned a total of 22 negative words and 34 positive words. The top 20 words that contribute to these sentiments are shown in the plot below. 
+
+```{r, message=FALSE, echo=FALSE}
+afinn_df <- df %>% inner_join(get_sentiments("afinn")) %>%
+    mutate(sentiment = case_when(value < 0 ~ 'negative', 
+                                 value > 0 ~ 'positive'))
+    
+afinn_df %>%
+    group_by(sentiment) %>%
+    do(head(., n=20)) %>% # top 20 words
+    ungroup() %>%
+    mutate(word = reorder(word, freq)) %>%
+    ggplot(aes(word, freq, fill=sentiment)) +
+    geom_col(show.legend = F) +
+    facet_wrap(~sentiment, scales = "free_y") +
+    labs(y = "Contribution to sentiment (AFINN lexicon)", x=NULL) +
+    coord_flip()
+```
+
+
+The calculated result indicates that the **_net sentiment_** of the speech is **_positive_**. **_Note:_** remember that the AFINN lexion scores each word, therefore the values in the table below are sums of those scores rather than the number of words.
+```{r, message=FALSE, echo=FALSE}
+afinn_net <- afinn_df %>% 
+    group_by(sentiment) %>%
+    summarize(total=sum(value)) %>%
+    spread(sentiment, total) %>%
+    mutate((net.sentiment=positive - abs(negative))) %>% 
+    kable(align = 'l')
+afinn_net
+```
+
+
+The comparison word cloud depicts all the words that contribute to positive and negative sentiments according to the AFINN lexicon.
+
+```{r, message=FALSE, echo=FALSE}
+set.seed(123)
+afinn_df %>% 
+    acast(word ~ sentiment, value.var = "freq", fill=0) %>%
+    comparison.cloud(colors = brewer.pal(7,"Set1")
+                     ,scale =c(5,.5)
+                     , rot.per=0.10
+                     , title.size=2
+                     , max.words=100)
+```
+
+
+
+\newpage
+## Appendix
+
+```{r, eval=FALSE}
+# Create word cloud
+set.seed(1000)
+wordcloud(clean_corpus
+    , scale=c(5,0.5)     # Set min and max scale
+    , max.words=200      # Set top n words
+    , random.order=FALSE # Words in decreasing freq
+    , rot.per=0.20       # % of vertical words
+    , use.r.layout=FALSE # Use C++ collision detection
+    , colors=brewer.pal(8, "Set2"))# other palette options: Accent, Dark2, Set1
+```
+
+
+```{r,eval=FALSE}
+# Plot of most frequently used words
+barplot(df[1:20,]$freq, las=2, names.arg = df[1:20,]$word,
+        col="lightblue", main="Top 20 Most Frequent Words",
+        ylab="Word frequencies")
+```
+
+
+```{r, eval=FALSE}
+# Plot of terms correlated with the word Freedom
+freedom <-data.frame(findAssocs(tdm, "freedom", 0.35))
+
+my_title <-expression(paste("Words Correlated with ", bold("Freedom")))
+freedom %>% rownames_to_column() %>%
+    ggplot(aes(x=reorder(rowname, freedom), y=freedom)) + 
+    geom_point(shape=20, size=3) +  
+    coord_flip() + ylab("Correlation") + xlab("Word") +
+    ggtitle(my_title) + theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r, eval=FALSE}
+# Plot of terms correlated with the word Dream
+dream <-data.frame(findAssocs(tdm, "dream", 0.35))
+
+my_title <-expression(paste("Words Correlated with ", bold("Dream")))
+dream %>% rownames_to_column() %>%
+    ggplot(aes(x=reorder(rowname, dream), y=dream)) + 
+    geom_point(shape=20, size=3) +
+    coord_flip() + ylab("Correlation") + xlab("Word") +
+    ggtitle(my_title) + theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r, eval=FALSE}
+# Plot of terms correlated with the word Negro
+negro <-data.frame(findAssocs(tdm, "negro", 0.30))
+
+my_title <-expression(paste("Words Correlated with ", bold("Negro")))
+negro %>% rownames_to_column() %>%
+    slice(1:40) %>% # only show 40 correlations
+    ggplot(aes(x=reorder(rowname, negro), y=negro)) + geom_point(shape=20,size=3) +
+    coord_flip() + ylab("Correlation") + xlab("Word") +
+    ggtitle(my_title) + theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# NRC Lexicon terms
+# Get the negative and positive sentiments word list 
+nrc_sent <-get_sentiments("nrc") %>%
+    filter(sentiment %in% c("positive", "negative")) %>%
+    count(word, sentiment, sort=T) %>%
+    ungroup()
+# Inner join words with NRC lexicon
+# There are 55 negative terms and 71 positive terms
+nrc_df <- df %>% inner_join(nrc_sent)
+# Plot of negative and positive sentiments
+nrc_df %>%
+    group_by(sentiment) %>%
+    #slice_max(order_by = freq, n=10) %>%
+    do(head(., n=10)) %>% # top 20 words
+    ungroup() %>%
+    mutate(word = reorder(word, freq)) %>%
+    ggplot(aes(word, freq, fill=sentiment)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~sentiment, scales = "free_y") +
+    labs(y = "Contribution to sentiment (NRC lexicon)", x=NULL) +
+    coord_flip()
+
+# NRC: 
+nrc_df %>% group_by(sentiment) %>%
+    summarize(total=sum(n)) %>%
+    spread(sentiment, total) %>%
+    mutate((net.sentiment=positive-negative)) %>% 
+    kable(align = 'l')
+```
+
+
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# Generate a comparison word cloud
+set.seed(123)
+nrc_df %>% 
+    acast(word ~ sentiment, value.var = "freq", fill=0) %>%
+    comparison.cloud(colors = brewer.pal(8,"Set1")
+      ,scale =c(5,.5), rot.per=0.1, title.size=2, max.words=100)
+```
+
+
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Bing Lexicon terms
+bing_sent <- df %>%
+    inner_join(get_sentiments("bing")) %>%
+    count(word, sentiment, sort=T) %>%
+    ungroup()
+# Inner join words with Bing lexicon
+bing_df <- df %>% inner_join(bing_sent)
+# Plot positive and negative sentiments
+bing_df %>%
+    group_by(sentiment) %>%
+    do(head(., n=10)) %>% # top 20 words
+    ungroup() %>%
+    mutate(word = reorder(word, freq)) %>%
+    ggplot(aes(word, freq, fill=sentiment)) +
+    geom_col(show.legend = F) +
+    facet_wrap(~sentiment, scales = "free_y") +
+    labs(y = "Contribution to sentiment (Bing lexicon)", x=NULL) +
+    coord_flip()
+
+# Bing: There are 54 negative terms and 46 positive terms
+ bing_df %>% group_by(sentiment) %>% 
+    summarize(total=sum(n)) %>%
+    spread(sentiment, total) %>%
+    mutate((net.sentiment=positive-negative)) %>% 
+    kable(align = 'l')
+```
+
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# Generate a comparison word cloud
+set.seed(123)
+bing_df %>% 
+    acast(word ~ sentiment, value.var = "freq", fill=0) %>%
+    comparison.cloud(colors = brewer.pal(8,"Set1")
+      ,scale =c(5,.5), rot.per=0.1, title.size=2, max.words=100)
+```
+
+```{r, message=FALSE, eval=FALSE}
+# AFINN lexicon terms
+afinn_df <- df %>% inner_join(get_sentiments("afinn")) %>%
+    mutate(sentiment = case_when(value < 0 ~ 'negative', 
+                                 value > 0 ~ 'positive'))
+# Plot positive and negative sentiments   
+afinn_df %>%
+    group_by(sentiment) %>%
+    do(head(., n=20)) %>% # top 20 words
+    ungroup() %>%
+    mutate(word = reorder(word, freq)) %>%
+    ggplot(aes(word, freq, fill=sentiment)) +
+    geom_col(show.legend = F) +
+    facet_wrap(~sentiment, scales = "free_y") +
+    labs(y = "Contribution to sentiment (AFINN lexicon)", x=NULL) +
+    coord_flip()
+
+# Generate a comparison word cloud
+set.seed(123)
+afinn_df %>% 
+    acast(word ~ sentiment, value.var = "freq", fill=0) %>%
+    comparison.cloud(colors = brewer.pal(7,"Set1")
+      ,scale =c(5,.5), rot.per=0.10, title.size=2, max.words=100)
+```
+
+```{r, message=FALSE, eval=FALSE}
+afinn_net <- afinn_df %>% 
+    group_by(sentiment) %>%
+    summarize(total=sum(value)) %>%
+    spread(sentiment, total) %>%
+    mutate((net.sentiment=positive - abs(negative))) %>% 
+    kable(align = 'l')
+afinn_net
+```
+
+## Reference
+
+Text Mining with R by Julia Silge and David Robinson (O'Reilly). Copyright 2017.
